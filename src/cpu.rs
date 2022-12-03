@@ -172,6 +172,16 @@ impl CPU {
                     self.program_counter += 1;
                 }
 
+                0xA5 => {
+                    self.lda(&AddressingMode::ZeroPage);
+                    self.program_counter += 1;
+                }
+
+                0xAD => {
+                    self.lda(&AddressingMode::Absolute);
+                    self.program_counter += 2;
+                }
+
                 // BRK
                 0x00 => {
                     return;
@@ -229,6 +239,15 @@ mod test {
         let mut cpu = CPU::new();
         cpu.load_and_run(vec![0xa9, 0x00, 0x00]);
         assert!(cpu.status & 0b0000_0010 == 0b10);
+    }
+
+    #[test]
+    fn test_lda_from_memory() {
+        let mut cpu = CPU::new();
+        cpu.mem_write(0x10, 0x55);
+        
+        cpu.load_and_run(vec![0xa5,0x10, 0x00]);
+        assert_eq!(cpu.register_a, 0x55);
     }
 
     #[test]
