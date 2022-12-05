@@ -1,5 +1,7 @@
 //the cpu is a mos technology 6502 microprocessor
 
+use crate::opcodes::OPCODE_MAP;
+
 pub struct CPU {
     pub register_a: u8,
     pub register_x: u8,
@@ -164,24 +166,12 @@ impl CPU {
         loop {
             let opcode = self.mem_read(self.program_counter);
             self.program_counter += 1;
+            let program_counter_state = self.program_counter;
 
             match opcode {
-                // LDA
-                0xA9 => {
-                    self.lda(&AddressingMode::Immediate);
-                    self.program_counter += 1;
+                0xA9 | 0xA5 | 0xB5 | 0xAD | 0xBD | 0xB9 | 0xA1 | 0xB1 => {
+                    self.lda(&OPCODE_MAP[&opcode].mode);
                 }
-
-                0xA5 => {
-                    self.lda(&AddressingMode::ZeroPage);
-                    self.program_counter += 1;
-                }
-
-                0xAD => {
-                    self.lda(&AddressingMode::Absolute);
-                    self.program_counter += 2;
-                }
-
                 // BRK
                 0x00 => {
                     return;
@@ -215,6 +205,9 @@ impl CPU {
 
                 _ => todo!(),
             }
+            if program_counter_state == self.program_counter {
+                self.program_counter += (OPCODE_MAP[&opcode].length - 1) as u16;
+            }
         }
     }
 }
@@ -245,8 +238,8 @@ mod test {
     fn test_lda_from_memory() {
         let mut cpu = CPU::new();
         cpu.mem_write(0x10, 0x55);
-        
-        cpu.load_and_run(vec![0xa5,0x10, 0x00]);
+
+        cpu.load_and_run(vec![0xa5, 0x10, 0x00]);
         assert_eq!(cpu.register_a, 0x55);
     }
 
