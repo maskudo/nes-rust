@@ -22,7 +22,7 @@ pub struct CPU {
     pub register_y: u8,
     pub status: Flags,
     pub program_counter: u16,
-    pub stack_ptr: u16,
+    pub stack_ptr: u8,
     pub memory: [u8; 0xFFFF],
 }
 
@@ -86,6 +86,9 @@ impl CPU {
     pub fn reset(&mut self) {
         self.register_a = 0;
         self.register_x = 0;
+        self.register_y = 0;
+        self.stack_ptr = 0xFD;
+        //INTERRUPT_DISABLE and UNUSED set to true
         self.status = Flags::from_bits_truncate(0b100100);
 
         self.program_counter = self.mem_read_u16(0xFFFC);
