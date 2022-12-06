@@ -1,12 +1,26 @@
 //the cpu is a mos technology 6502 microprocessor
 
 use crate::opcodes::OPCODE_MAP;
+use bitflags::bitflags;
+
+bitflags! {
+    pub struct Flags: u8{
+        const CARRY = (1<<0);
+        const ZERO = (1<<1);
+        const INTERRUPT_DISABLE = (1<<2);
+        const DECIMAL_MODE = (1<<3);
+        const BREAK = (1<<4);
+        const UNUSED = (1<<5);
+        const OVERFLOW = (1<<6);
+        const NEGATIVE = (1<<7);
+    }
+}
 
 pub struct CPU {
     pub register_a: u8,
     pub register_x: u8,
     pub register_y: u8,
-    pub status: u8,
+    pub status: Flags,
     pub program_counter: u16,
     pub stack_ptr: u16,
     pub memory: [u8; 0xFFFF],
@@ -33,11 +47,19 @@ impl CPU {
             register_a: 0,
             register_x: 0,
             register_y: 0,
-            status: 0,
+            status: Flags::from_bits_truncate(0b100100),
             program_counter: 0,
             stack_ptr: 0,
             memory: [0; 0xFFFF],
         }
+    }
+
+    fn set_flag(&mut self, flag:Flags) {
+        self.status.insert(flag);
+    }
+
+    fn clear_flag(&mut self, flag:Flags) {
+        self.status.remove(flag);
     }
 
     fn mem_read(&self, addr: u16) -> u8 {
@@ -64,7 +86,7 @@ impl CPU {
     pub fn reset(&mut self) {
         self.register_a = 0;
         self.register_x = 0;
-        self.status = 0;
+        self.status = Flags::from_bits_truncate(0b100100);
 
         self.program_counter = self.mem_read_u16(0xFFFC);
     }
@@ -83,24 +105,24 @@ impl CPU {
     fn update_zero_and_negative_flags(&mut self, result: u8) {
         // changing zero flag
         if result == 0 {
-            self.status = self.status | 0b0000_0010;
+            self.set_flag(Flags::ZERO);
         } else {
-            self.status = self.status & 0b0111_1111;
+            self.clear_flag(Flags::ZERO);
         }
 
         // changing negative flag
         if result & 0b1000_0000 != 0 {
-            self.status |= 0b1000_0000;
+            self.set_flag(Flags::NEGATIVE);
         } else {
-            self.status &= 0b0111_1111;
+            self.clear_flag(Flags::NEGATIVE);
         }
     }
 
     fn update_carry_flag(&mut self, result: u8) {
         if result > 0 {
-            self.status |= 0b0000_0001;
+            self.set_flag(Flags::CARRY);
         } else {
-            self.status &= 0b1111_1110;
+            self.clear_flag(Flags::CARRY);
         }
     }
 
@@ -196,7 +218,6 @@ impl CPU {
                 // CPY
                 0xc0 => {
                     let param = self.mem_read(self.program_counter);
-                    self.program_counter += 1;
 
                     let result = self.register_y - param;
                     self.update_carry_flag(result);
@@ -223,15 +244,15 @@ mod test {
         let mut cpu = CPU::new();
         cpu.load_and_run(vec![0xa9, 0x05, 0x00]);
         assert_eq!(cpu.register_a, 0x05);
-        assert!(cpu.status & 0b0000_0010 == 0b00);
-        assert!(cpu.status & 0b1000_0000 == 0);
+        assert!(cpu.status.bits() & 0b0000_0010 == 0b00);
+        assert!(cpu.status.bits() & 0b1000_0000 == 0);
     }
 
     #[test]
     fn test_0xa9_lda_zero_flag() {
         let mut cpu = CPU::new();
         cpu.load_and_run(vec![0xa9, 0x00, 0x00]);
-        assert!(cpu.status & 0b0000_0010 == 0b10);
+        assert!(cpu.status.bits() & 0b0000_0010 == 0b10);
     }
 
     #[test]
