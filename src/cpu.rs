@@ -216,11 +216,24 @@ impl CPU {
         }
     }
 
-    fn cpy(&mut self, mode: &AddressingMode) {
+    fn bit(&mut self, mode: &AddressingMode) {
         let addr = self.get_operand_address(mode);
         let value = self.mem_read(addr);
 
-        let result = self.register_y - value;
+        let result = self.register_a & value;
+        self.update_zero_and_negative_flags(result);
+        if result & (1 << 6) == 1 {
+            self.set_flag(Flags::OVERFLOW);
+        } else {
+            self.clear_flag(Flags::OVERFLOW);
+        }
+    }
+
+    fn compare(&mut self, mode: &AddressingMode, compare_with_reg: u8) {
+        let addr = self.get_operand_address(mode);
+        let value = self.mem_read(addr);
+
+        let result = compare_with_reg - value;
         self.update_carry_flag(result);
         self.update_zero_and_negative_flags(result);
     }
@@ -279,9 +292,34 @@ impl CPU {
                     return;
                 }
 
+                //BIT
+                0x24 | 0x2c => self.bit(&OPCODE_MAP[&opcode].mode),
+
+                //CLC
+                0x18 => self.clear_flag(Flags::CARRY),
+
+                //CLD
+                0xd8 => self.clear_flag(Flags::DECIMAL_MODE),
+
+                //CLI
+                0x58 => self.clear_flag(Flags::INTERRUPT_DISABLE),
+
+                //CLV
+                0xb8 => self.clear_flag(Flags::OVERFLOW),
+
+                //CMP
+                0xc9 | 0xc5 | 0xd5 | 0xcd | 0xdd | 0xd9 | 0xc1 | 0xd1 => {
+                    self.compare(&OPCODE_MAP[&opcode].mode, self.register_a);
+                }
+
+                // CPX
+                0xe0 | 0xe4 | 0xec=> {
+                    self.compare(&OPCODE_MAP[&opcode].mode, self.register_x);
+                }
+
                 // CPY
-                0xc0 | 0xc4 | 0xCC => {
-                    self.cpy(&OPCODE_MAP[&opcode].mode);
+                0xc0 | 0xc4 | 0xcc => {
+                    self.compare(&OPCODE_MAP[&opcode].mode, self.register_y);
                 }
 
                 // INX
