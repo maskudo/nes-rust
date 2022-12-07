@@ -54,11 +54,11 @@ impl CPU {
         }
     }
 
-    fn set_flag(&mut self, flag:Flags) {
+    fn set_flag(&mut self, flag: Flags) {
         self.status.insert(flag);
     }
 
-    fn clear_flag(&mut self, flag:Flags) {
+    fn clear_flag(&mut self, flag: Flags) {
         self.status.remove(flag);
     }
 
@@ -179,6 +179,52 @@ impl CPU {
         }
     }
 
+    fn and(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        let value = self.mem_read(addr);
+
+        let result = self.register_a & value;
+        self.register_a = result;
+        self.update_zero_and_negative_flags(result);
+    }
+
+    fn asl(&mut self, mode: &AddressingMode) {
+        if let AddressingMode::NoneAddressing = mode {
+            let data = self.register_a;
+            self.update_carry_flag(data);
+            self.register_a = data << 1;
+        } else {
+            let addr = self.get_operand_address(mode);
+            let value = self.mem_read(addr);
+
+            self.update_carry_flag(value);
+            let result = value << 1;
+            self.mem_write(addr, result);
+            self.update_zero_and_negative_flags(result);
+        }
+    }
+
+    fn branch(&mut self, condition: bool) {
+        if condition {
+            let jump = self.mem_read(self.program_counter) as i8;
+            let addr = self
+                .program_counter
+                .wrapping_add(1)
+                .wrapping_add(jump as u16);
+
+            self.program_counter = addr;
+        }
+    }
+
+    fn cpy(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        let value = self.mem_read(addr);
+
+        let result = self.register_y - value;
+        self.update_carry_flag(result);
+        self.update_zero_and_negative_flags(result);
+    }
+
     fn lda(&mut self, mode: &AddressingMode) {
         let addr = self.get_operand_address(mode);
         let value = self.mem_read(addr);
@@ -194,18 +240,48 @@ impl CPU {
             let program_counter_state = self.program_counter;
 
             match opcode {
-                0xA9 | 0xA5 | 0xB5 | 0xAD | 0xBD | 0xB9 | 0xA1 | 0xB1 => {
-                    self.lda(&OPCODE_MAP[&opcode].mode);
+                // todo adc
+
+                //AND
+                0x29 | 0x25 | 0x35 | 0x2D | 0x3D | 0x39 | 0x21 | 0x31 => {
+                    self.and(&OPCODE_MAP[&opcode].mode);
                 }
+
+                //ASL
+                0x0a | 0x06 | 0x16 | 0x1e | 0x0e => self.asl(&OPCODE_MAP[&opcode].mode),
+
+                //BCC
+                0x90 => self.branch(!self.status.contains(Flags::CARRY)),
+
+                //BCS
+                0xb0 => self.branch(self.status.contains(Flags::CARRY)),
+
+                //BPL
+                0x10 => self.branch(!self.status.contains(Flags::NEGATIVE)),
+
+                //BMI
+                0x30 => self.branch(self.status.contains(Flags::NEGATIVE)),
+
+                //BVC
+                0x50 => self.branch(!self.status.contains(Flags::OVERFLOW)),
+
+                //BVS
+                0x70 => self.branch(self.status.contains(Flags::OVERFLOW)),
+
+                //BNE
+                0xd0 => self.branch(!self.status.contains(Flags::ZERO)),
+
+                //BEQ
+                0xf0 => self.branch(self.status.contains(Flags::ZERO)),
+
                 // BRK
                 0x00 => {
                     return;
                 }
 
-                // TAX
-                0xAA => {
-                    self.register_x = self.register_a;
-                    self.update_zero_and_negative_flags(self.register_x);
+                // CPY
+                0xc0 | 0xc4 | 0xCC => {
+                    self.cpy(&OPCODE_MAP[&opcode].mode);
                 }
 
                 // INX
@@ -218,13 +294,15 @@ impl CPU {
                     self.update_zero_and_negative_flags(self.register_x);
                 }
 
-                // CPY
-                0xc0 => {
-                    let param = self.mem_read(self.program_counter);
+                //LDA
+                0xA9 | 0xA5 | 0xB5 | 0xAD | 0xBD | 0xB9 | 0xA1 | 0xB1 => {
+                    self.lda(&OPCODE_MAP[&opcode].mode);
+                }
 
-                    let result = self.register_y - param;
-                    self.update_carry_flag(result);
-                    self.update_zero_and_negative_flags(result);
+                // TAX
+                0xAA => {
+                    self.register_x = self.register_a;
+                    self.update_zero_and_negative_flags(self.register_x);
                 }
 
                 _ => todo!(),
