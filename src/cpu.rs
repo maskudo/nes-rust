@@ -26,6 +26,9 @@ pub struct CPU {
     pub memory: [u8; 0xFFFF],
 }
 
+const STACK: u16 = 0x0100;
+const STACK_RESET: u8 = 0xfd;
+
 #[derive(Debug)]
 #[allow(non_camel_case_types)]
 pub enum AddressingMode {
@@ -49,7 +52,7 @@ impl CPU {
             register_y: 0,
             status: Flags::from_bits_truncate(0b100100),
             program_counter: 0,
-            stack_ptr: 0,
+            stack_ptr: STACK_RESET,
             memory: [0; 0xFFFF],
         }
     }
@@ -127,6 +130,30 @@ impl CPU {
         } else {
             self.clear_flag(Flags::CARRY);
         }
+    }
+
+    fn stack_push(&mut self, data: u8) {
+        self.mem_write((STACK as u16) + self.stack_ptr as u16, data);
+        self.stack_ptr = self.stack_ptr.wrapping_sub(1);
+    }
+
+    fn stack_push_u16(&mut self, data: u16) {
+        let high = (data >> 8) as u8;
+        let low = (data & 0xff) as u8;
+        self.stack_push(high);
+        self.stack_push(low);
+    }
+
+    fn stack_pop(&mut self) -> u8 {
+        self.stack_ptr = self.stack_ptr.wrapping_add(1);
+        self.mem_read((STACK as u16) + self.stack_ptr as u16)
+    }
+
+    fn stack_pop_u16(&mut self) -> u16 {
+        let low = self.stack_pop() as u16;
+        let high = self.stack_pop() as u16;
+
+        high << 8 | low
     }
 
     fn get_operand_address(&self, mode: &AddressingMode) -> u16 {
@@ -238,12 +265,74 @@ impl CPU {
         self.update_zero_and_negative_flags(result);
     }
 
+    fn dec(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        let value = self.mem_read(addr);
+
+        let result = value.wrapping_sub(1);
+        self.mem_write(addr, result);
+        self.update_zero_and_negative_flags(result);
+    }
+
+    fn dex(&mut self) {
+        self.register_x = self.register_x.wrapping_sub(1);
+        self.update_zero_and_negative_flags(self.register_x);
+    }
+
+    fn dey(&mut self) {
+        self.register_y = self.register_y.wrapping_sub(1);
+        self.update_zero_and_negative_flags(self.register_y);
+    }
+
+    fn eor(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        let value = self.mem_read(addr);
+
+        self.register_a ^= value;
+        self.update_zero_and_negative_flags(self.register_a);
+    }
+
+    fn inc(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        let value = self.mem_read(addr);
+
+        let result = value.wrapping_add(1);
+        self.mem_write(addr, result);
+        self.update_zero_and_negative_flags(result);
+    }
+
+    fn inx(&mut self) {
+        self.register_x = self.register_x.wrapping_add(1);
+        self.update_zero_and_negative_flags(self.register_x);
+    }
+
+    fn iny(&mut self) {
+        self.register_y = self.register_y.wrapping_add(1);
+        self.update_zero_and_negative_flags(self.register_y);
+    }
+
     fn lda(&mut self, mode: &AddressingMode) {
         let addr = self.get_operand_address(mode);
         let value = self.mem_read(addr);
 
         self.register_a = value;
         self.update_zero_and_negative_flags(self.register_a);
+    }
+
+    fn ldx(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        let value = self.mem_read(addr);
+
+        self.register_x = value;
+        self.update_zero_and_negative_flags(self.register_x);
+    }
+
+    fn ldy(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        let value = self.mem_read(addr);
+
+        self.register_y = value;
+        self.update_zero_and_negative_flags(self.register_y);
     }
 
     pub fn run(&mut self) {
@@ -313,7 +402,7 @@ impl CPU {
                 }
 
                 // CPX
-                0xe0 | 0xe4 | 0xec=> {
+                0xe0 | 0xe4 | 0xec => {
                     self.compare(&OPCODE_MAP[&opcode].mode, self.register_x);
                 }
 
@@ -322,20 +411,71 @@ impl CPU {
                     self.compare(&OPCODE_MAP[&opcode].mode, self.register_y);
                 }
 
+                //DEC
+                0xc6 | 0xd6 | 0xce | 0xde => self.dec(&OPCODE_MAP[&opcode].mode),
+
+                //DEX
+                0xca => self.dex(),
+                //dey
+                0x88 => self.dey(),
+
+                // EOR
+                0x49 | 0x45 | 0x55 | 0x4d | 0x5d | 0x59 | 0x41 | 0x51 => {
+                    self.eor(&OPCODE_MAP[&opcode].mode)
+                }
+
+                //INC
+                0xe6 | 0xf6 | 0xee | 0xfe => self.inc(&OPCODE_MAP[&opcode].mode),
+
                 // INX
-                0xe8 => {
-                    if self.register_x == 0xff {
-                        self.register_x = 0x00;
+                0xe8 => self.inx(),
+
+                // INY
+                0xc8 => self.iny(),
+
+                //JMP Abs
+                0x4c => {
+                    let addr = self.mem_read_u16(self.program_counter);
+                    self.program_counter = addr;
+                }
+                // JMP Indirect
+                0x6c => {
+                    // An original 6502 has does not correctly fetch the target address
+                    //if the indirect vector falls on a page boundary
+                    //(e.g. $xxFF where xx is any value from $00 to $FF).
+                    //In this case fetches the LSB from $xxFF as expected but takes the MSB from $xx00.
+                    //This is fixed in some later chips like the 65SC02
+                    //so for compatibility always ensure the indirect vector is not at the end of the page.
+
+                    let addr = self.mem_read_u16(self.program_counter);
+                    let indirect_ref = if addr & 0xff == 0xff {
+                        let low = self.mem_read(addr);
+                        let high = self.mem_read(addr & 0xff00);
+                        (high as u16) << 8 | (low as u16)
                     } else {
-                        self.register_x += 1;
-                    }
-                    self.update_zero_and_negative_flags(self.register_x);
+                        self.mem_read_u16(addr)
+                    };
+
+                    self.program_counter = indirect_ref;
+                }
+
+                //JSR
+                0x20 => {
+                    self.stack_push_u16(self.program_counter + 2 - 1);
+                    let target = self.mem_read_u16(self.program_counter);
+                    self.program_counter = target;
                 }
 
                 //LDA
                 0xA9 | 0xA5 | 0xB5 | 0xAD | 0xBD | 0xB9 | 0xA1 | 0xB1 => {
                     self.lda(&OPCODE_MAP[&opcode].mode);
                 }
+
+                //LDX
+                0xa2 | 0xa6 | 0xb6 | 0xae | 0xbe => self.ldx(&OPCODE_MAP[&opcode].mode),
+
+                //LDY
+                0xa0 | 0xa4 | 0xb4 | 0xac | 0xbc => self.ldy(&OPCODE_MAP[&opcode].mode),
 
                 // TAX
                 0xAA => {
