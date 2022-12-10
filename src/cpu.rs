@@ -206,6 +206,33 @@ impl CPU {
         }
     }
 
+    fn adc(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        let value = self.mem_read(addr);
+
+        let sum = self.register_a as u16
+            + value as u16
+            + (if self.status.contains(Flags::CARRY) {
+                1
+            } else {
+                0
+            }) as u16;
+        let carry = sum > 0xff;
+        if carry {
+            self.set_flag(Flags::CARRY);
+        } else {
+            self.clear_flag(Flags::CARRY);
+        }
+        let result = sum as u8;
+        if (value ^ result) & (result ^ self.register_a) & 0x80 != 0 {
+            self.set_flag(Flags::OVERFLOW);
+        } else {
+            self.clear_flag(Flags::OVERFLOW);
+        }
+        self.register_a = result;
+        self.update_zero_and_negative_flags(self.register_a);
+    }
+
     fn and(&mut self, mode: &AddressingMode) {
         let addr = self.get_operand_address(mode);
         let value = self.mem_read(addr);
@@ -335,6 +362,140 @@ impl CPU {
         self.update_zero_and_negative_flags(self.register_y);
     }
 
+    fn lsr_acc(&mut self) {
+        let data = self.register_a;
+        if data & 1 == 1 {
+            self.set_flag(Flags::CARRY);
+        } else {
+            self.clear_flag(Flags::CARRY);
+        }
+        self.register_a = data >> 1;
+        self.update_zero_and_negative_flags(self.register_a);
+    }
+
+    fn lsr(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        let mut data = self.mem_read(addr);
+
+        if data & 1 == 1 {
+            self.set_flag(Flags::CARRY);
+        } else {
+            self.clear_flag(Flags::CARRY);
+        }
+        data = data >> 1;
+        self.mem_write(addr, data);
+        self.update_zero_and_negative_flags(data);
+    }
+
+    fn ora(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        let value = self.mem_read(addr);
+
+        self.register_a = self.register_a | value;
+        self.update_zero_and_negative_flags(self.register_a);
+    }
+
+    fn php(&mut self) {
+        let mut flags = self.status.clone();
+        flags.insert(Flags::BREAK);
+        flags.insert(Flags::UNUSED);
+        self.stack_push(flags.bits());
+    }
+
+    fn rol_acc(&mut self) {
+        let mut value = self.register_a;
+        let old_carry = self.status.contains(Flags::CARRY);
+        if value >> 7 == 1 {
+            self.set_flag(Flags::CARRY);
+        } else {
+            self.clear_flag(Flags::CARRY);
+        }
+        value = value << 1;
+        if old_carry {
+            value = value | 1;
+        }
+        self.register_a = value;
+        self.update_zero_and_negative_flags(self.register_a);
+    }
+
+    fn rol(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        let mut value = self.mem_read(addr);
+        let old_carry = self.status.contains(Flags::CARRY);
+        if value >> 7 == 1 {
+            self.set_flag(Flags::CARRY);
+        } else {
+            self.clear_flag(Flags::CARRY);
+        }
+        value = value << 1;
+        if old_carry {
+            value = value | 1;
+        }
+        self.mem_write(addr, value);
+        self.update_zero_and_negative_flags(value);
+    }
+
+    fn ror_acc(&mut self) {
+        let mut value = self.register_a;
+        let old_carry = self.status.contains(Flags::CARRY);
+        if value & 1 == 1 {
+            self.set_flag(Flags::CARRY);
+        } else {
+            self.clear_flag(Flags::CARRY);
+        }
+        value = value >> 1;
+        if old_carry {
+            value = value | (1 << 7);
+        }
+        self.register_a = value;
+        self.update_zero_and_negative_flags(self.register_a);
+    }
+
+    fn ror(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        let mut value = self.mem_read(addr);
+        let old_carry = self.status.contains(Flags::CARRY);
+        if value & 1 == 1 {
+            self.set_flag(Flags::CARRY);
+        } else {
+            self.clear_flag(Flags::CARRY);
+        }
+        value = value >> 1;
+        if old_carry {
+            value = value | (1 << 7);
+        }
+        self.mem_write(addr, value);
+        self.update_zero_and_negative_flags(value);
+    }
+
+    fn sbc(&mut self, mode: &AddressingMode) {
+        let addr = self.get_operand_address(mode);
+        let mut value = self.mem_read(addr);
+        value = (value as i8).wrapping_neg().wrapping_sub(1) as u8;
+
+        let sum = self.register_a as u16
+            + value as u16
+            + (if self.status.contains(Flags::CARRY) {
+                1
+            } else {
+                0
+            }) as u16;
+        let carry = sum > 0xff;
+        if carry {
+            self.set_flag(Flags::CARRY);
+        } else {
+            self.clear_flag(Flags::CARRY);
+        }
+        let result = sum as u8;
+        if (value ^ result) & (result ^ self.register_a) & 0x80 != 0 {
+            self.set_flag(Flags::OVERFLOW);
+        } else {
+            self.clear_flag(Flags::OVERFLOW);
+        }
+        self.register_a = result;
+        self.update_zero_and_negative_flags(self.register_a);
+    }
+
     pub fn run(&mut self) {
         loop {
             let opcode = self.mem_read(self.program_counter);
@@ -342,7 +503,10 @@ impl CPU {
             let program_counter_state = self.program_counter;
 
             match opcode {
-                // todo adc
+                // ADC
+                0x69 | 0x65 | 0x75 | 0x6d | 0x7d | 0x79 | 0x61 | 0x71 => {
+                    self.adc(&OPCODE_MAP[&opcode].mode)
+                }
 
                 //AND
                 0x29 | 0x25 | 0x35 | 0x2D | 0x3D | 0x39 | 0x21 | 0x31 => {
@@ -477,13 +641,123 @@ impl CPU {
                 //LDY
                 0xa0 | 0xa4 | 0xb4 | 0xac | 0xbc => self.ldy(&OPCODE_MAP[&opcode].mode),
 
+                //LSR
+                0x4a => self.lsr_acc(),
+                0x46 | 0x56 | 0x4e | 0x5e => self.lsr(&OPCODE_MAP[&opcode].mode),
+
+                //NOP
+                0xea => {}
+
+                //ORA
+                0x09 | 0x05 | 0x15 | 0x0d | 0x1d | 0x19 | 0x01 | 0x11 => {
+                    self.ora(&OPCODE_MAP[&opcode].mode)
+                }
+
+                //PHA
+                0x48 => self.stack_push(self.register_a),
+                //PHP
+                0x08 => self.php(),
+                //PLA
+                0x68 => {
+                    let value = self.stack_pop();
+                    self.register_a = value;
+                    self.update_zero_and_negative_flags(value);
+                }
+
+                //PLP
+                0x28 => {
+                    self.status.bits = self.stack_pop();
+                    self.status.remove(Flags::BREAK);
+                    self.status.insert(Flags::UNUSED);
+                }
+
+                //ROL
+                0x2a => self.rol_acc(),
+                0x26 | 0x36 | 0x2e | 0x3e => self.rol(&OPCODE_MAP[&opcode].mode),
+
+                //ROR
+                0x6a => self.ror_acc(),
+                0x66 | 0x76 | 0x6e | 0x7e => self.ror(&OPCODE_MAP[&opcode].mode),
+
+                //RTI
+                0x40 => {
+                    self.status.bits = self.stack_pop();
+                    self.status.remove(Flags::BREAK);
+                    self.status.insert(Flags::UNUSED);
+
+                    self.program_counter = self.stack_pop_u16();
+                }
+
+                //RTS
+                0x60 => self.program_counter = self.stack_pop_u16() + 1,
+
+                //SBC
+                0xe9 | 0xe5 | 0xf5 | 0xed | 0xfd | 0xf9 | 0xe1 | 0xf1 => {
+                    self.sbc(&OPCODE_MAP[&opcode].mode)
+                }
+
+                //SEC
+                0x38 => self.set_flag(Flags::CARRY),
+                //SED
+                0xf8 => self.set_flag(Flags::DECIMAL_MODE),
+                //SEI
+                0x78 => self.set_flag(Flags::INTERRUPT_DISABLE),
+
+                //STA
+                0x85 | 0x95 | 0x8d | 0x9d | 0x99 | 0x81 | 0x91 => {
+                    let addr = self.get_operand_address(&OPCODE_MAP[&opcode].mode);
+                    self.mem_write(addr, self.register_a);
+                }
+
+                //STX
+                0x86 | 0x96 | 0x8e => {
+                    let addr = self.get_operand_address(&OPCODE_MAP[&opcode].mode);
+                    self.mem_write(addr, self.register_x);
+                }
+
+                //STY
+                0x84 | 0x94 | 0x8c => {
+                    let addr = self.get_operand_address(&OPCODE_MAP[&opcode].mode);
+                    self.mem_write(addr, self.register_y);
+                }
+
                 // TAX
-                0xAA => {
+                0xaa => {
                     self.register_x = self.register_a;
                     self.update_zero_and_negative_flags(self.register_x);
                 }
 
-                _ => todo!(),
+                // TAY
+                0xa8 => {
+                    self.register_y = self.register_a;
+                    self.update_zero_and_negative_flags(self.register_y);
+                }
+
+                //TSX
+                0xba => {
+                    self.register_x = self.stack_ptr;
+                    self.update_zero_and_negative_flags(self.register_x);
+                }
+
+                //TXA
+                0x8a => {
+                    self.register_a = self.register_x;
+                    self.update_zero_and_negative_flags(self.register_a);
+                }
+
+                //TXS
+                0x9a => {
+                    self.stack_ptr = self.register_x;
+                }
+
+                //TYA
+                0x98 => {
+                    self.register_a = self.register_y;
+                    self.update_zero_and_negative_flags(self.register_a);
+                }
+                _ => {
+                    println!("Illegal opcde {}", opcode);
+                }
             }
             if program_counter_state == self.program_counter {
                 self.program_counter += (OPCODE_MAP[&opcode].length - 1) as u16;
