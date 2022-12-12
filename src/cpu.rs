@@ -65,21 +65,21 @@ impl CPU {
         self.status.remove(flag);
     }
 
-    fn mem_read(&self, addr: u16) -> u8 {
+    pub fn mem_read(&self, addr: u16) -> u8 {
         self.memory[addr as usize]
     }
 
-    fn mem_read_u16(&self, pos: u16) -> u16 {
+    pub fn mem_read_u16(&self, pos: u16) -> u16 {
         let low = self.mem_read(pos) as u16;
         let high = self.mem_read(pos + 1) as u16;
         (high << 8) | (low as u16)
     }
 
-    fn mem_write(&mut self, addr: u16, data: u8) {
+    pub fn mem_write(&mut self, addr: u16, data: u8) {
         self.memory[addr as usize] = data;
     }
 
-    fn mem_write_u16(&mut self, pos: u16, data: u16) {
+    pub fn mem_write_u16(&mut self, pos: u16, data: u16) {
         let high = (data >> 8) as u8;
         let low = (data & 0xff) as u8;
         self.mem_write(pos, low);
@@ -90,7 +90,7 @@ impl CPU {
         self.register_a = 0;
         self.register_x = 0;
         self.register_y = 0;
-        self.stack_ptr = 0xFD;
+        self.stack_ptr = STACK_RESET;
         //INTERRUPT_DISABLE and UNUSED set to true
         self.status = Flags::from_bits_truncate(0b100100);
 
@@ -98,8 +98,8 @@ impl CPU {
     }
 
     pub fn load(&mut self, program: Vec<u8>) {
-        self.memory[0x8000..(0x8000 + program.len())].copy_from_slice(&program[..]);
-        self.mem_write_u16(0xFFFC, 0x8000);
+        self.memory[0x0600..(0x0600 + program.len())].copy_from_slice(&program[..]);
+        self.mem_write_u16(0xFFFC, 0x0600);
     }
 
     pub fn load_and_run(&mut self, program: Vec<u8>) {
@@ -287,7 +287,7 @@ impl CPU {
         let addr = self.get_operand_address(mode);
         let value = self.mem_read(addr);
 
-        let result = compare_with_reg - value;
+        let result = compare_with_reg.wrapping_sub(value);
         self.update_carry_flag(result);
         self.update_zero_and_negative_flags(result);
     }
@@ -497,6 +497,13 @@ impl CPU {
     }
 
     pub fn run(&mut self) {
+        self.run_with_callback(|_| {});
+    }
+
+    pub fn run_with_callback<F>(&mut self, mut callback: F)
+    where
+        F: FnMut(&mut CPU),
+    {
         loop {
             let opcode = self.mem_read(self.program_counter);
             self.program_counter += 1;
@@ -757,11 +764,13 @@ impl CPU {
                 }
                 _ => {
                     println!("Illegal opcde {}", opcode);
+                    todo!();
                 }
             }
             if program_counter_state == self.program_counter {
                 self.program_counter += (OPCODE_MAP[&opcode].length - 1) as u16;
             }
+            callback(self);
         }
     }
 }
