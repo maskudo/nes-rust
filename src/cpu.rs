@@ -3,6 +3,9 @@
 use crate::opcodes::OPCODE_MAP;
 use bitflags::bitflags;
 
+use std::fs::OpenOptions;
+use std::io::prelude::*;
+
 bitflags! {
     pub struct Flags: u8{
         const CARRY = (1<<0);
@@ -98,8 +101,10 @@ impl CPU {
     }
 
     pub fn load(&mut self, program: Vec<u8>) {
-        self.memory[0x0600..(0x0600 + program.len())].copy_from_slice(&program[..]);
-        self.mem_write_u16(0xFFFC, 0x0600);
+        //0x8000
+        self.memory[0x8000..(0x8000 + program.len())].copy_from_slice(&program[..]);
+        self.memory[0xC000..(0xC000 + program.len())].copy_from_slice(&program[..]);
+        self.mem_write_u16(0xFFFC, 0xC000);
     }
 
     pub fn load_and_run(&mut self, program: Vec<u8>) {
@@ -125,7 +130,7 @@ impl CPU {
     }
 
     fn update_carry_flag(&mut self, result: u8) {
-        if result > 0 {
+        if result >> 7 == 1 {
             self.set_flag(Flags::CARRY);
         } else {
             self.clear_flag(Flags::CARRY);
@@ -247,6 +252,7 @@ impl CPU {
             let data = self.register_a;
             self.update_carry_flag(data);
             self.register_a = data << 1;
+            self.update_zero_and_negative_flags(self.register_a);
         } else {
             let addr = self.get_operand_address(mode);
             let value = self.mem_read(addr);
@@ -275,12 +281,13 @@ impl CPU {
         let value = self.mem_read(addr);
 
         let result = self.register_a & value;
-        self.update_zero_and_negative_flags(result);
-        if result & (1 << 6) == 1 {
-            self.set_flag(Flags::OVERFLOW);
+        if result == 0 {
+            self.status.insert(Flags::ZERO);
         } else {
-            self.clear_flag(Flags::OVERFLOW);
+            self.status.remove(Flags::ZERO);
         }
+        self.status.set(Flags::NEGATIVE, value & (1 << 7) > 0);
+        self.status.set(Flags::OVERFLOW, value & (1 << 6) > 0);
     }
 
     fn compare(&mut self, mode: &AddressingMode, compare_with_reg: u8) {
@@ -288,7 +295,13 @@ impl CPU {
         let value = self.mem_read(addr);
 
         let result = compare_with_reg.wrapping_sub(value);
-        self.update_carry_flag(result);
+
+        if value <= compare_with_reg {
+            self.set_flag(Flags::CARRY);
+        } else {
+            self.clear_flag(Flags::CARRY);
+        }
+
         self.update_zero_and_negative_flags(result);
     }
 
@@ -504,8 +517,27 @@ impl CPU {
     where
         F: FnMut(&mut CPU),
     {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .append(true)
+            .create(true)
+            .open("my-nestest.log")
+            .unwrap();
+
         loop {
             let opcode = self.mem_read(self.program_counter);
+
+            if let Err(e) = writeln!(
+                file,
+                "{opcode:#04X}    A:{:#04X} X:{:#04X} Y:{:#04X} P:{:#04X} SP:{:#04X}",
+                self.register_a,
+                self.register_x,
+                self.register_y,
+                self.status.bits(),
+                self.stack_ptr
+            ) {
+                eprintln!("Couldn't write to file: {e}");
+            }
             self.program_counter += 1;
             let program_counter_state = self.program_counter;
 
@@ -668,7 +700,7 @@ impl CPU {
                 0x68 => {
                     let value = self.stack_pop();
                     self.register_a = value;
-                    self.update_zero_and_negative_flags(value);
+                    self.update_zero_and_negative_flags(self.register_a);
                 }
 
                 //PLP
@@ -763,8 +795,8 @@ impl CPU {
                     self.update_zero_and_negative_flags(self.register_a);
                 }
                 _ => {
-                    println!("Illegal opcde {}", opcode);
-                    todo!();
+                    eprintln!("Illegal opcde {:04X}", opcode);
+                    continue;
                 }
             }
             if program_counter_state == self.program_counter {
