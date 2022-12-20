@@ -5,3 +5,4 @@ extern crate bitflags;
 pub mod bus;
 pub mod cpu;
 pub mod opcodes;
+pub mod cartridge;
