@@ -1,5 +1,6 @@
 //the cpu is a mos technology 6502 microprocessor
 
+use crate::bus::Bus;
 use crate::opcodes::OPCODE_MAP;
 use bitflags::bitflags;
 
@@ -26,7 +27,7 @@ pub struct CPU {
     pub status: Flags,
     pub program_counter: u16,
     pub stack_ptr: u8,
-    pub memory: [u8; 0xFFFF],
+    pub bus: Bus,
 }
 
 const STACK: u16 = 0x0100;
@@ -47,6 +48,42 @@ pub enum AddressingMode {
     NoneAddressing,
 }
 
+pub trait Mem {
+    fn mem_read(&self, addr: u16) -> u8;
+    fn mem_write(&mut self, addr: u16, data: u8) -> ();
+
+    fn mem_read_u16(&self, pos: u16) -> u16 {
+        let low = self.mem_read(pos) as u16;
+        let high = self.mem_read(pos + 1) as u16;
+        (high << 8) | (low as u16)
+    }
+
+    fn mem_write_u16(&mut self, pos: u16, data: u16) {
+        let high = (data >> 8) as u8;
+        let low = (data & 0xff) as u8;
+        self.mem_write(pos, low);
+        self.mem_write(pos + 1, high);
+    }
+}
+
+impl Mem for CPU {
+    fn mem_read(&self, addr: u16) -> u8 {
+        self.bus.mem_read(addr)
+    }
+
+    fn mem_read_u16(&self, pos: u16) -> u16 {
+        self.bus.mem_read_u16(pos)
+    }
+
+    fn mem_write(&mut self, addr: u16, data: u8) {
+        self.bus.mem_write(addr, data)
+    }
+
+    fn mem_write_u16(&mut self, pos: u16, data: u16) {
+        self.bus.mem_write_u16(pos, data)
+    }
+}
+
 impl CPU {
     pub fn new() -> Self {
         CPU {
@@ -56,7 +93,7 @@ impl CPU {
             status: Flags::from_bits_truncate(0b100100),
             program_counter: 0,
             stack_ptr: STACK_RESET,
-            memory: [0; 0xFFFF],
+            bus: Bus::new(),
         }
     }
 
@@ -66,27 +103,6 @@ impl CPU {
 
     fn clear_flag(&mut self, flag: Flags) {
         self.status.remove(flag);
-    }
-
-    pub fn mem_read(&self, addr: u16) -> u8 {
-        self.memory[addr as usize]
-    }
-
-    pub fn mem_read_u16(&self, pos: u16) -> u16 {
-        let low = self.mem_read(pos) as u16;
-        let high = self.mem_read(pos + 1) as u16;
-        (high << 8) | (low as u16)
-    }
-
-    pub fn mem_write(&mut self, addr: u16, data: u8) {
-        self.memory[addr as usize] = data;
-    }
-
-    pub fn mem_write_u16(&mut self, pos: u16, data: u16) {
-        let high = (data >> 8) as u8;
-        let low = (data & 0xff) as u8;
-        self.mem_write(pos, low);
-        self.mem_write(pos + 1, high);
     }
 
     pub fn reset(&mut self) {
@@ -101,10 +117,10 @@ impl CPU {
     }
 
     pub fn load(&mut self, program: Vec<u8>) {
-        //0x8000
-        self.memory[0x8000..(0x8000 + program.len())].copy_from_slice(&program[..]);
-        self.memory[0xC000..(0xC000 + program.len())].copy_from_slice(&program[..]);
-        self.mem_write_u16(0xFFFC, 0xC000);
+        for i in 0..(program.len() as u16) {
+            self.mem_write(0x0600 + i, program[i as usize]);
+        }
+        self.mem_write_u16(0xFFFC, 0x0600);
     }
 
     pub fn load_and_run(&mut self, program: Vec<u8>) {
@@ -521,8 +537,9 @@ impl CPU {
             .write(true)
             .append(true)
             .create(true)
-            .open("my-nestest.log")
+            .open("cpu.log")
             .unwrap();
+        file.set_len(0).unwrap();
 
         loop {
             let opcode = self.mem_read(self.program_counter);
