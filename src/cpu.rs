@@ -93,7 +93,7 @@ impl CPU {
             status: Flags::from_bits_truncate(0b100100),
             program_counter: 0,
             stack_ptr: STACK_RESET,
-            bus
+            bus,
         }
     }
 
@@ -348,13 +348,14 @@ impl CPU {
         self.update_zero_and_negative_flags(self.register_a);
     }
 
-    fn inc(&mut self, mode: &AddressingMode) {
+    fn inc(&mut self, mode: &AddressingMode) -> u8 {
         let addr = self.get_operand_address(mode);
         let value = self.mem_read(addr);
 
         let result = value.wrapping_add(1);
         self.mem_write(addr, result);
         self.update_zero_and_negative_flags(result);
+        result
     }
 
     fn inx(&mut self) {
@@ -645,7 +646,9 @@ impl CPU {
                 }
 
                 //INC
-                0xe6 | 0xf6 | 0xee | 0xfe => self.inc(&OPCODE_MAP[&opcode].mode),
+                0xe6 | 0xf6 | 0xee | 0xfe => {
+                    self.inc(&OPCODE_MAP[&opcode].mode);
+                }
 
                 // INX
                 0xe8 => self.inx(),
@@ -811,6 +814,117 @@ impl CPU {
                     self.register_a = self.register_y;
                     self.update_zero_and_negative_flags(self.register_a);
                 }
+
+                //Unofficial
+                //ANC
+                0x0b | 0x2b => {
+                    let addr = self.get_operand_address(&OPCODE_MAP[&opcode].mode);
+                    let data = self.mem_read(addr);
+                    let result = data & self.register_a;
+                    self.register_a = result;
+                    self.update_zero_and_negative_flags(self.register_a);
+                    if self.status.contains(Flags::NEGATIVE) {
+                        self.status.insert(Flags::CARRY);
+                    } else {
+                        self.status.remove(Flags::CARRY);
+                    }
+                }
+
+                //AAX (SAX)
+                0x87 | 0x97 | 0x83 | 0x8F => {
+                    let addr = self.get_operand_address(&OPCODE_MAP[&opcode].mode);
+                    let result = self.register_x & self.register_a;
+                    self.mem_write(addr, result);
+                    //unsure
+                    self.update_zero_and_negative_flags(result);
+                }
+
+                //ARR
+                0x6b => {
+                    let addr = self.get_operand_address(&OPCODE_MAP[&opcode].mode);
+                    let data = self.mem_read(addr);
+                    let result = self.register_a & data;
+                    self.register_a = result;
+                    self.update_zero_and_negative_flags(self.register_a);
+
+                    self.ror_acc();
+                    let result = self.register_a;
+                    let bit_5 = (result >> 5) & 1;
+                    let bit_6 = (result >> 6) & 1;
+
+                    if bit_6 == 1 {
+                        self.status.insert(Flags::CARRY);
+                    } else {
+                        self.status.remove(Flags::CARRY);
+                    }
+
+                    if bit_5 ^ bit_6 == 1 {
+                        self.status.insert(Flags::OVERFLOW);
+                    } else {
+                        self.status.remove(Flags::OVERFLOW);
+                    }
+
+                    self.update_zero_and_negative_flags(result);
+                }
+
+                //ASR (ALR)
+                0x4b => {
+                    let addr = self.get_operand_address(&OPCODE_MAP[&opcode].mode);
+                    let data = self.mem_read(addr);
+                    self.register_a = self.register_a & data;
+                    self.update_zero_and_negative_flags(self.register_a);
+                    self.lsr_acc();
+                }
+
+                //ATX (LXA) (OAL)
+                0xab => {
+                    self.lda(&OPCODE_MAP[&opcode].mode);
+                    self.register_x = self.register_a;
+                    self.update_zero_and_negative_flags(self.register_x);
+                }
+
+                //AXA (SHA)
+                0x9f | 0x93 => {
+                    let addr = self.get_operand_address(&OPCODE_MAP[&opcode].mode);
+                    let result = self.register_x & self.register_a & (addr >> 8) as u8;
+                    self.mem_write(addr, result);
+                }
+
+                //AXS (SBX) (SAX)
+                0xcb => {
+                    let addr = self.get_operand_address(&OPCODE_MAP[&opcode].mode);
+                    let data = self.mem_read(addr);
+
+                    let x_and_a = self.register_x & self.register_a;
+                    let result = x_and_a.wrapping_sub(data);
+
+                    if data <= x_and_a {
+                        self.status.insert(Flags::CARRY);
+                    }
+                    self.register_x = result;
+                    self.update_carry_flag(result);
+                }
+
+                //DCP (DCM)
+                0xc7 | 0xd7 | 0xcf | 0xdf | 0xdb | 0xc3 | 0xd3 => {
+                    let addr = self.get_operand_address(&OPCODE_MAP[&opcode].mode);
+                    let data = self.mem_read(addr);
+                    let result = data.wrapping_sub(1);
+                    self.update_carry_flag(result);
+                    self.mem_write(addr, result);
+                }
+
+                //DOP (NOP)
+                0x04 | 0x14 | 0x34 | 0x44 | 0x54 | 0x64 | 0x74 | 0x80 | 0x82 | 0x89 | 0xc2
+                | 0xd4 | 0xe2 | 0xf4 => {
+                    let addr = self.get_operand_address(&OPCODE_MAP[&opcode].mode);
+                    let _data = self.mem_read(addr);
+                    //no operation
+                }
+
+                //ISC (ISB) (INS)
+                0xe7 | 0xf7 | 0xef | 0xff | 0xfb | 0xe3 | 0xf3 => {}
+
                 _ => {
                     eprintln!("Illegal opcde {:04X}", opcode);
                     continue;
