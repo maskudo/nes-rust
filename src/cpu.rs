@@ -31,6 +31,8 @@ pub struct CPU {
 }
 
 const STACK: u16 = 0x0100;
+// stack initially set to 0x0100. during reset, cpu pushes program_counter(PC) and status register(P) values to the stack
+// resulting in a decrement of 3. as a result the stack pointer wraps back to 0x1fd
 const STACK_RESET: u8 = 0xfd;
 
 #[derive(Debug)]

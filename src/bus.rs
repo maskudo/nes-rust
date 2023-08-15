@@ -5,15 +5,20 @@ const RAM_MIRROR_END: u16 = 0x1FFF;
 const PPU_REGISTERS: u16 = 0x2000;
 const PPU_REGISTERS_MIRRORS_END: u16 = 0x3FFF;
 
+// ram mirrored 3 times
+// [0x800 .. 0x1000]
+// [0x1000 .. 0x1800]
+// [0x1800 .. 0x2000]
+
 pub struct Bus {
-    cpu_vram: [u8; 2048],
+    cpu_vram: [u8; 0x800],
     rom: Rom,
 }
 
 impl Bus {
     pub fn new(rom: Rom) -> Self {
         Bus {
-            cpu_vram: [0; 2048],
+            cpu_vram: [0; 0x800],
             rom,
         }
     }
