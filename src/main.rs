@@ -95,7 +95,7 @@ fn main() {
         .create_texture_target(PixelFormatEnum::RGB24, 32, 32)
         .unwrap();
 
-    let bytes: Vec<u8> = std::fs::read("nestest.nes").unwrap();
+    let bytes: Vec<u8> = std::fs::read("snake.nes").unwrap();
     let rom = Rom::new(&bytes).unwrap();
 
     //load the game
@@ -103,7 +103,7 @@ fn main() {
     let mut cpu = CPU::new(bus);
     cpu.reset();
     //for nestest
-    cpu.program_counter = 0xC000;
+    // cpu.program_counter = 0xC000;
 
     let mut screen_state = [0 as u8; 32 * 3 * 32];
     let mut rng = rand::thread_rng();
