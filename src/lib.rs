@@ -3,6 +3,7 @@ extern crate lazy_static;
 extern crate bitflags;
 
 pub mod bus;
+pub mod cartridge;
 pub mod cpu;
 pub mod opcodes;
-pub mod cartridge;
+pub mod ppu;
